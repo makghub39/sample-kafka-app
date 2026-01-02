@@ -1,0 +1,227 @@
+version: '3.8'
+
+services:
+  # ═══════════════════════════════════════════════════════════════
+  # AZURE SQL EDGE - SQL Server compatible (ARM64/x64 support)
+  # For batch lookups: customer, inventory, pricing data
+  # ═══════════════════════════════════════════════════════════════
+  sqlserver:
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    container_name: sqlserver
+    ports:
+      - "1433:1433"
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=YourStrong@Passw0rd
+      - MSSQL_PID=Developer
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "pidof sqlservr || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    networks:
+      - order-network
+
+  # ═══════════════════════════════════════════════════════════════
+  # SQL SERVER INIT - Create database and schema
+  # Uses mssql-tools image which has sqlcmd
+  # ═══════════════════════════════════════════════════════════════
+  sqlserver-init:
+    image: mcr.microsoft.com/mssql-tools:latest
+    container_name: sqlserver-init
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    volumes:
+      - ./src/main/resources/schema-sqlserver.sql:/scripts/schema.sql:ro
+      - ./src/main/resources/data-sqlserver.sql:/scripts/data.sql:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command: |
+      "
+      echo 'Waiting for SQL Server to be fully ready...'
+      sleep 10
+      
+      echo 'Creating database ordersdb...'
+      /opt/mssql-tools/bin/sqlcmd -S sqlserver -U sa -P 'YourStrong@Passw0rd' -Q 'IF NOT EXISTS (SELECT * FROM sys.databases WHERE name = N'\''ordersdb'\'') CREATE DATABASE ordersdb;'
+      
+      echo 'Running schema script...'
+      /opt/mssql-tools/bin/sqlcmd -S sqlserver -U sa -P 'YourStrong@Passw0rd' -d ordersdb -i /scripts/schema.sql
+      
+      echo 'Running data script...'
+      /opt/mssql-tools/bin/sqlcmd -S sqlserver -U sa -P 'YourStrong@Passw0rd' -d ordersdb -i /scripts/data.sql
+      
+      echo 'SQL Server initialization complete!'
+      "
+    networks:
+      - order-network
+
+  # ═══════════════════════════════════════════════════════════════
+  # MONGODB - For fetching orders
+  # ═══════════════════════════════════════════════════════════════
+  mongodb:
+    image: mongo:7.0
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password
+      - MONGO_INITDB_DATABASE=ordersdb
+    volumes:
+      - mongodb_data:/data/db
+      - ./src/main/resources/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - order-network
+
+  # ═══════════════════════════════════════════════════════════════
+  # MONGO EXPRESS - Web UI for MongoDB
+  # ═══════════════════════════════════════════════════════════════
+  mongo-express:
+    image: mongo-express:latest
+    container_name: mongo-express
+    ports:
+      - "8082:8081"
+    environment:
+      - ME_CONFIG_MONGODB_ADMINUSERNAME=admin
+      - ME_CONFIG_MONGODB_ADMINPASSWORD=password
+      - ME_CONFIG_MONGODB_URL=mongodb://admin:password@mongodb:27017/
+      - ME_CONFIG_BASICAUTH_USERNAME=admin
+      - ME_CONFIG_BASICAUTH_PASSWORD=admin
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - order-network
+
+  # ═══════════════════════════════════════════════════════════════
+  # KAFKA (KRaft mode - no Zookeeper needed)
+  # ═══════════════════════════════════════════════════════════════
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+    environment:
+      # KRaft settings (no Zookeeper)
+      - KAFKA_NODE_ID=1
+      - KAFKA_PROCESS_ROLES=broker,controller
+      - KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+      - KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      
+      # Listeners
+      - KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      
+      # Topic settings
+      - KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
+      - KAFKA_NUM_PARTITIONS=20
+      - KAFKA_DEFAULT_REPLICATION_FACTOR=1
+      
+      # Performance
+      - KAFKA_LOG_RETENTION_HOURS=24
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    networks:
+      - order-network
+
+  # ═══════════════════════════════════════════════════════════════
+  # KAFKA UI (Optional - for monitoring)
+  # ═══════════════════════════════════════════════════════════════
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8081:8080"
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=local
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - order-network
+
+  # ═══════════════════════════════════════════════════════════════
+  # IBM MQ (WebSphere MQ Developer Edition)
+  # Note: Runs via emulation on ARM64 Macs (slower but works)
+  # ═══════════════════════════════════════════════════════════════
+  ibm-mq:
+    image: icr.io/ibm-messaging/mq:latest
+    platform: linux/amd64
+    container_name: ibm-mq
+    ports:
+      - "1414:1414"   # MQ listener port
+      - "9443:9443"   # MQ Console (HTTPS)
+    environment:
+      - LICENSE=accept
+      - MQ_QMGR_NAME=QM1
+      - MQ_APP_PASSWORD=passw0rd
+      - MQ_ADMIN_PASSWORD=passw0rd
+    volumes:
+      - mq_data:/mnt/mqm
+    healthcheck:
+      test: ["CMD", "chkmqhealthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - order-network
+
+  # ═══════════════════════════════════════════════════════════════
+  # INIT CONTAINER - Create Kafka topics
+  # ═══════════════════════════════════════════════════════════════
+  kafka-init:
+    image: apache/kafka:3.9.0
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command: |
+      "
+      echo 'Creating Kafka topics...'
+      
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists \
+        --topic order-events \
+        --partitions 20 \
+        --replication-factor 1
+      
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists \
+        --topic order-events-dlq \
+        --partitions 5 \
+        --replication-factor 1
+      
+      echo 'Topics created:'
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
+      
+      echo 'Kafka initialization complete!'
+      "
+    networks:
+      - order-network
+
+volumes:
+  kafka_data:
+  mq_data:
+  mongodb_data:
+  sqlserver_data:
+
+networks:
+  order-network:
+    driver: bridge

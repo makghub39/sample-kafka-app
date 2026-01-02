@@ -1,0 +1,15 @@
+/Users/mak/Documents/vscode projects/dbdemo/kafka-order-processor/src/test/java/com/example/benchmark/DatabaseBenchmarkTest.java
+/Users/mak/Documents/vscode projects/dbdemo/kafka-order-processor/src/test/java/com/example/benchmark/ProcessingBenchmark.java
+/Users/mak/Documents/vscode projects/dbdemo/kafka-order-processor/src/test/java/com/example/config/ExecutorConfigTest.java
+/Users/mak/Documents/vscode projects/dbdemo/kafka-order-processor/src/test/java/com/example/config/TraceContextManagerTest.java
+/Users/mak/Documents/vscode projects/dbdemo/kafka-order-processor/src/test/java/com/example/config/TraceIdFilterTest.java
+/Users/mak/Documents/vscode projects/dbdemo/kafka-order-processor/src/test/java/com/example/repository/OrderRepositoryChunkTest.java
+/Users/mak/Documents/vscode projects/dbdemo/kafka-order-processor/src/test/java/com/example/repository/OrderRepositoryIntegrationTest.java
+/Users/mak/Documents/vscode projects/dbdemo/kafka-order-processor/src/test/java/com/example/repository/OrderRepositoryRetryTest.java
+/Users/mak/Documents/vscode projects/dbdemo/kafka-order-processor/src/test/java/com/example/repository/SqlTemplateLoaderTest.java
+/Users/mak/Documents/vscode projects/dbdemo/kafka-order-processor/src/test/java/com/example/route/OrderEventProcessorTest.java
+/Users/mak/Documents/vscode projects/dbdemo/kafka-order-processor/src/test/java/com/example/route/TraceIdProcessorTest.java
+/Users/mak/Documents/vscode projects/dbdemo/kafka-order-processor/src/test/java/com/example/service/OrderProcessingOrchestratorTest.java
+/Users/mak/Documents/vscode projects/dbdemo/kafka-order-processor/src/test/java/com/example/service/preload/DataPreloadServiceTest.java
+/Users/mak/Documents/vscode projects/dbdemo/kafka-order-processor/src/test/java/com/example/service/processing/BusinessLogicServiceTest.java
+/Users/mak/Documents/vscode projects/dbdemo/kafka-order-processor/src/test/java/com/example/service/publishing/PublishingServiceTest.java

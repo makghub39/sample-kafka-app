@@ -1,0 +1,40 @@
+# Production profile - SQL Server + Kafka + MongoDB
+spring:
+  # ═══════════════════════════════════════════════════════════════
+  # SQL SERVER DATABASE (Azure SQL / SQL Server)
+  # ═══════════════════════════════════════════════════════════════
+  datasource:
+    url: ${SQLSERVER_URL:jdbc:sqlserver://localhost:1433;databaseName=ordersdb;encrypt=true;trustServerCertificate=false}
+    driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
+    username: ${SQLSERVER_USER:sa}
+    password: ${SQLSERVER_PASSWORD}
+    hikari:
+      maximum-pool-size: 30
+      minimum-idle: 10
+      connection-timeout: 10000
+      idle-timeout: 300000
+      max-lifetime: 1800000
+      pool-name: OrdersHikariPool
+
+  # Disable H2 console in production
+  h2:
+    console:
+      enabled: false
+
+  # Disable auto-init in production (schema managed separately)
+  sql:
+    init:
+      mode: never
+
+  kafka:
+    listener:
+      auto-startup: true
+    properties:
+      # Fail faster if broker is unavailable
+      request.timeout.ms: 5000
+      default.api.timeout.ms: 5000
+
+# Production chunk size for SQL Server (max ~2100 params)
+app:
+  db:
+    chunk-size: 1000

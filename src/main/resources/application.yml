@@ -1,0 +1,225 @@
+spring:
+  application:
+    name: kafka-order-processor
+
+  # ═══════════════════════════════════════════════════════════════
+  # CACHING CONFIGURATION
+  # ═══════════════════════════════════════════════════════════════
+  cache:
+    type: caffeine
+    caffeine:
+      spec: maximumSize=10000,expireAfterWrite=5m,recordStats
+
+  # ═══════════════════════════════════════════════════════════════
+  # H2 IN-MEMORY DATABASE (for batch lookups: customer, inventory, pricing)
+  # ═══════════════════════════════════════════════════════════════
+  datasource:
+    url: jdbc:h2:mem:ordersdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: 
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 10000
+      idle-timeout: 300000
+      max-lifetime: 1800000
+      pool-name: OrdersHikariPool
+
+  # H2 Console (access at http://localhost:8080/h2-console)
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  # Initialize schema and data
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+      data-locations: classpath:data.sql
+
+  # ═══════════════════════════════════════════════════════════════
+  # MONGODB CONFIGURATION (for fetching orders - replaces API call)
+  # Disabled by default for local testing without Docker
+  # Spring Boot 4 uses spring.mongodb prefix (not spring.data.mongodb)
+  # ═══════════════════════════════════════════════════════════════
+  mongodb:
+    uri: ${MONGODB_URI:mongodb://localhost:27017/ordersdb}
+  
+  data:
+    mongodb:
+      auto-index-creation: true
+
+  autoconfigure:
+    exclude:
+      # Spring Boot 4.x MongoDB auto-configuration classes
+      # Only top-level @AutoConfiguration classes can be excluded
+      - org.springframework.boot.mongodb.autoconfigure.MongoAutoConfiguration
+      - org.springframework.boot.mongodb.autoconfigure.MongoReactiveAutoConfiguration
+      - org.springframework.boot.mongodb.autoconfigure.health.MongoHealthContributorAutoConfiguration
+      - org.springframework.boot.mongodb.autoconfigure.metrics.MongoMetricsAutoConfiguration
+      - org.springframework.boot.data.mongodb.autoconfigure.DataMongoAutoConfiguration
+      - org.springframework.boot.data.mongodb.autoconfigure.DataMongoRepositoriesAutoConfiguration
+      # IBM MQ auto-configuration
+      - com.ibm.mq.spring.boot.MQAutoConfiguration
+
+  # ═══════════════════════════════════════════════════════════════
+  # KAFKA CONFIGURATION - Optimized for throughput
+  # ═══════════════════════════════════════════════════════════════
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: order-processor-group
+      auto-offset-reset: earliest
+      enable-auto-commit: false          # CRITICAL: Manual commit
+      max-poll-records: 500              # Batch size
+      # Fetch size optimization
+      fetch-min-size: 50000              # 50KB min per fetch (wait for more data)
+      fetch-max-wait: 500                # Max 500ms wait for min fetch size
+      properties:
+        max.poll.interval.ms: 600000     # 10 minutes
+        session.timeout.ms: 30000
+        # Network optimization
+        receive.buffer.bytes: 262144     # 256KB receive buffer
+        # Larger fetch sizes for throughput
+        max.partition.fetch.bytes: 2097152  # 2MB per partition
+    producer:
+      acks: all
+      retries: 3
+      batch-size: 32768                  # 32KB batch for producer
+      buffer-memory: 67108864            # 64MB buffer
+    # Listener configuration
+    listener:
+      # Set to false to not auto-start Kafka listener (for demo without Kafka)
+      # Set to true in production
+      auto-startup: ${KAFKA_LISTENER_AUTOSTART:false}
+      # Concurrency matches partition count for max parallelism
+      concurrency: ${KAFKA_LISTENER_CONCURRENCY:1}
+
+  # Enable virtual threads (Java 21+)
+  threads:
+    virtual:
+      enabled: true
+
+# ═══════════════════════════════════════════════════════════════
+# APACHE CAMEL CONFIGURATION
+# ═══════════════════════════════════════════════════════════════
+camel:
+  springboot:
+    # Main switch for all Camel routes
+    main-run-controller: true
+    # JMX management (useful for Hawtio monitoring)
+    jmx-enabled: false
+  # Route auto-startup (can be overridden per route)
+  route:
+    autostart: ${CAMEL_ROUTE_AUTOSTART:false}
+
+# ═══════════════════════════════════════════════════════════════
+# APPLICATION CONFIGURATION
+# ═══════════════════════════════════════════════════════════════
+app:
+  kafka:
+    topic:
+      order-events: order-events
+      dead-letter: order-events-dlq
+
+  mongodb:
+    enabled: ${MONGODB_ENABLED:false}  # Disabled by default for local testing
+
+  # ═══════════════════════════════════════════════════════════════
+  # ORDER GROUPING CONFIGURATION
+  # ═══════════════════════════════════════════════════════════════
+  grouping:
+    # Grouping strategy: BY_CUSTOMER, BY_WAREHOUSE, BY_TIER, HIGH_VALUE, NONE
+    strategy: ${GROUPING_STRATEGY:BY_CUSTOMER}
+    # Minimum orders to form a group (smaller groups sent individually)
+    min-group-size: ${GROUPING_MIN_SIZE:2}
+    # Threshold for HIGH_VALUE strategy
+    high-value-threshold: ${HIGH_VALUE_THRESHOLD:1000}
+
+  wmq:
+    # Enable IBM MQ (set to true in docker profile)
+    enabled: ${WMQ_ENABLED:false}
+    # Queue for all order messages (grouped and individual)
+    queue-name: ${WMQ_QUEUE:DEV.QUEUE.1}
+    # JMS session pool size (higher = more parallel sends)
+    session-cache-size: ${WMQ_SESSION_CACHE:20}
+    # Max concurrent MQ publish operations (prevents overwhelming MQ)
+    publish-concurrency: ${WMQ_PUBLISH_CONCURRENCY:50}
+
+  executor:
+    # Max concurrent order processing operations
+    processing-concurrency: ${PROCESSING_CONCURRENCY:100}
+    db-concurrency: 10            # Max parallel DB operations
+
+  # ═══════════════════════════════════════════════════════════════
+  # DATABASE CONFIGURATION
+  # ═══════════════════════════════════════════════════════════════
+  db:
+    # Chunk size for batch queries (SQL Server limit is ~2100 params)
+    # Keep below 1000 for Oracle compatibility
+    chunk-size: ${DB_CHUNK_SIZE:500}
+    # Retry behavior for transient DB failures (per-chunk)
+    max-retries: ${DB_MAX_RETRIES:2}
+    retry-delay-ms: ${DB_RETRY_DELAY_MS:100}
+
+  # ═══════════════════════════════════════════════════════════════
+  # CACHING CONFIGURATION
+  # ═══════════════════════════════════════════════════════════════
+  cache:
+    data:
+      enabled: ${CACHE_DATA_ENABLED:true}    # Enable data caching
+      max-size: ${CACHE_DATA_MAX_SIZE:10000} # Max cached order IDs
+      ttl-minutes: ${CACHE_DATA_TTL:5}       # Data TTL (5 min default)
+    dedup:
+      max-size: ${CACHE_DEDUP_MAX_SIZE:50000} # Max event IDs to track
+      ttl-minutes: ${CACHE_DEDUP_TTL:60}      # Dedup window (1 hour default)
+
+# ═══════════════════════════════════════════════════════════════
+# ACTUATOR / MONITORING
+# ═══════════════════════════════════════════════════════════════
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+    metrics:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    enable:
+      jvm: true
+      process: true
+      system: true
+      hikari: true
+      kafka: true
+  # Enable tracing for trace IDs in logs
+  tracing:
+    sampling:
+      probability: 1.0  # 100% of requests get trace IDs
+    propagation:
+      type: b3  # Use B3 propagation (Brave default)
+    brave:
+      span-joining-supported: true
+
+# ═══════════════════════════════════════════════════════════════
+# LOGGING WITH TRACE ID
+# ═══════════════════════════════════════════════════════════════
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %5p [${spring.application.name:},%X{traceId:-},%X{spanId:-}] --- [%15.15t] %-40.40logger{39} : %m%n"
+  level:
+    root: info
+    com.example: DEBUG
+    org.springframework.kafka: INFO
+    org.apache.kafka: WARN
+    org.apache.camel: INFO
+    org.apache.camel.component.kafka: DEBUG
+
+server:
+  port: 8080

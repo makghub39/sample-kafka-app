@@ -1,0 +1,147 @@
+spring:
+  application:
+    name: kafka-order-processor
+
+  # ═══════════════════════════════════════════════════════════════
+  # SQL SERVER / AZURE SQL EDGE DATABASE (for batch lookups)
+  # ═══════════════════════════════════════════════════════════════
+  datasource:
+    url: jdbc:sqlserver://localhost:1433;databaseName=ordersdb;encrypt=false;trustServerCertificate=true
+    driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
+    username: sa
+    password: YourStrong@Passw0rd
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 10000
+      idle-timeout: 300000
+      max-lifetime: 1800000
+      pool-name: OrdersHikariPool
+
+  # Disable H2 console in docker profile
+  h2:
+    console:
+      enabled: false
+
+  # Disable SQL init - database is initialized by init-sqlserver.sh or docker-compose
+  sql:
+    init:
+      mode: never
+
+  # ═══════════════════════════════════════════════════════════════
+  # MONGODB CONFIGURATION (for fetching orders - replaces API call)
+  # Spring Boot 4 uses spring.mongodb prefix (not spring.data.mongodb)
+  # ═══════════════════════════════════════════════════════════════
+  mongodb:
+    uri: mongodb://orderapp:orderpass@localhost:27017/ordersdb?authSource=ordersdb
+  
+  data:
+    mongodb:
+      # Disable auto-index creation - indexes are created by mongo-init.js
+      auto-index-creation: false
+  
+  # Override base config - enable MongoDB in docker profile
+  autoconfigure:
+    exclude: []
+
+  # ═══════════════════════════════════════════════════════════════
+  # KAFKA CONFIGURATION (Docker)
+  # ═══════════════════════════════════════════════════════════════
+  kafka:
+    bootstrap-servers: localhost:9094
+    consumer:
+      group-id: order-processor-group
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      max-poll-records: 500
+      properties:
+        max.poll.interval.ms: 600000
+        session.timeout.ms: 30000
+        fetch.min.bytes: 1
+        fetch.max.wait.ms: 500
+    producer:
+      acks: all
+      retries: 3
+    listener:
+      auto-startup: true  # Enable Kafka listener in docker profile
+
+  threads:
+
+# ═══════════════════════════════════════════════════════════════
+# IBM MQ CONFIGURATION (Docker)
+# Note: ibm.mq.* properties are at root level, not under spring.*
+# ═══════════════════════════════════════════════════════════════
+ibm:
+  mq:
+    queue-manager: QM1
+    channel: DEV.APP.SVRCONN
+    conn-name: localhost(1414)
+    user: app
+    password: passw0rd
+    virtual:
+      enabled: true
+
+# ═══════════════════════════════════════════════════════════════
+# APPLICATION CONFIGURATION
+# ═══════════════════════════════════════════════════════════════
+app:
+  kafka:
+    topic:
+      order-events: order-events
+      dead-letter: order-events-dlq
+
+  wmq:
+    enabled: true
+    queue-name: DEV.QUEUE.1
+    publish-concurrency: 150
+
+  mongodb:
+    enabled: true
+
+  executor:
+    processing-concurrency: 50
+    db-concurrency: 10
+
+  # SQL Server has 2100 parameter limit - use smaller chunks
+  db:
+    # Chunk size for batch queries (SQL Server limit is ~2100 params)
+    # Keep below 1000 for Oracle compatibility
+    chunk-size: ${DB_CHUNK_SIZE:500}
+    # Retry behavior for transient DB failures (per-chunk)
+    max-retries: ${DB_MAX_RETRIES:2}
+    retry-delay-ms: ${DB_RETRY_DELAY_MS:100}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+  tracing:
+    sampling:
+      probability: 1.0
+    propagation:
+      type: b3  # Use B3 propagation (Brave default)
+    brave:
+      span-joining-supported: true
+
+
+
+      # 100% of requests get trace IDs
+logging:
+  pattern:
+    level: "%5p [%X{traceId:-},%X{spanId:-}]"
+  level:
+    root: info
+    com.example: DEBUG
+    org.springframework.kafka: INFO
+    org.apache.kafka: WARN
+    com.ibm.mq: INFO
+
+server:
+  port: 8080
+
+camel:
+  route:
+    autostart: true

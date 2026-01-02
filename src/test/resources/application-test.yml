@@ -1,0 +1,54 @@
+# Test profile - uses H2 in-memory database
+spring:
+  application:
+    name: kafka-order-processor-test
+
+  # ═══════════════════════════════════════════════════════════════
+  # H2 IN-MEMORY DATABASE (for unit tests)
+  # ═══════════════════════════════════════════════════════════════
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: 
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 1
+
+  h2:
+    console:
+      enabled: false
+
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+      data-locations: classpath:data.sql
+
+  # Disable MongoDB, IBM MQ, and Tracing in tests
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.mongodb.autoconfigure.MongoAutoConfiguration
+      - org.springframework.boot.mongodb.autoconfigure.MongoReactiveAutoConfiguration
+      - org.springframework.boot.data.mongodb.autoconfigure.DataMongoAutoConfiguration
+      - org.springframework.boot.data.mongodb.autoconfigure.DataMongoRepositoriesAutoConfiguration
+      - com.ibm.mq.spring.boot.MQAutoConfiguration
+      - org.springframework.boot.actuate.autoconfigure.tracing.BraveAutoConfiguration
+      - org.springframework.boot.actuate.autoconfigure.tracing.MicrometerTracingAutoConfiguration
+
+  kafka:
+    listener:
+      auto-startup: false
+
+app:
+  mongodb:
+    enabled: false
+  wmq:
+    enabled: false
+  db:
+    chunk-size: 100  # Smaller chunks for testing
+
+logging:
+  level:
+    root: warn
+    com.example: info
